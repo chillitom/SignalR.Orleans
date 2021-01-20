@@ -10,7 +10,7 @@ using SignalR.Orleans.Users;
 // ReSharper disable once CheckNamespace
 namespace Orleans
 {
-    public static class GrainSignalRExtensions
+public static class GrainSignalRExtensions
     {
         [Obsolete("Use Send instead", false)]
         public static async Task SendSignalRMessage(this IConnectionGrain grain, string methodName, params object[] message)
@@ -40,6 +40,21 @@ namespace Orleans
         public static void SendOneWay(this IHubMessageInvoker grain, string methodName, params object[] args)
         {
             grain.InvokeOneWay(g => g.Send(methodName, args));
+        }
+
+
+
+        /// <summary>
+        /// Invokes a method on the hub.
+        /// </summary>
+        /// <param name="grain"></param>
+        /// <param name="methodName">Target method name to invoke.</param>
+        /// <param name="args">Arguments to pass to the target method.</param>
+        /// <returns>true if the message was sent successfully</returns>
+        public static Task<bool> TrySend(this IClientGrain grain, string methodName, params object[] args)
+        {
+            var invocationMessage = new InvocationMessage(methodName, args).AsImmutable();
+            return grain.TrySend(invocationMessage);
         }
     }
 

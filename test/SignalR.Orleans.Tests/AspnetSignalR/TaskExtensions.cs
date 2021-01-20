@@ -7,7 +7,7 @@ namespace System.Threading.Tasks
 {
     public static class TaskExtensions
     {
-        private const int DefaultTimeout = 5000;
+        private const int DefaultTimeout = 10000;
 
         public static Task OrTimeout(this Task task, int milliseconds = DefaultTimeout, [CallerMemberName] string memberName = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int? lineNumber = null)
         {

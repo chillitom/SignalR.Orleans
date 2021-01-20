@@ -61,22 +61,17 @@ namespace SignalR.Orleans.Clients
 
         public async Task Send(Immutable<InvocationMessage> message)
         {
-            if (State.ServerId != Guid.Empty)
+            if (!await TrySend(message))
             {
-                _logger.LogDebug("Sending message on {hubName}.{targetMethod} to connection {connectionId}", _keyData.HubName, message.Value.Target, _keyData.Id);
-                _failAttempts = 0;
-                await _serverStream.OnNextAsync(new ClientMessage { ConnectionId = _keyData.Id, Payload = message.Value, HubName = _keyData.HubName });
-                return;
-            }
+                _logger.LogInformation("Client not connected for connectionId {connectionId} and hub {hubName} ({targetMethod})", _keyData.Id, _keyData.HubName, message.Value.Target);
 
-            _logger.LogInformation("Client not connected for connectionId {connectionId} and hub {hubName} ({targetMethod})", _keyData.Id, _keyData.HubName, message.Value.Target);
-
-            _failAttempts++;
-            if (_failAttempts >= _maxFailAttempts)
-            {
-                await OnDisconnect("attempts-limit-reached");
-                _logger.LogWarning("Force disconnect client for connectionId {connectionId} and hub {hubName} ({targetMethod}) after exceeding attempts limit",
-                    _keyData.Id, _keyData.HubName, message.Value.Target);
+                _failAttempts++;
+                if (_failAttempts >= _maxFailAttempts)
+                {
+                    await OnDisconnect("attempts-limit-reached");
+                    _logger.LogWarning("Force disconnect client for connectionId {connectionId} and hub {hubName} ({targetMethod}) after exceeding attempts limit",
+                        _keyData.Id, _keyData.HubName, message.Value.Target);
+                }
             }
         }
 
@@ -105,5 +100,19 @@ namespace SignalR.Orleans.Clients
 
             DeactivateOnIdle();
         }
+
+        public async Task<bool> TrySend(Immutable<InvocationMessage> message)
+        {
+            if (State.ServerId != Guid.Empty)
+            {
+                _logger.LogDebug("Sending message on {hubName}.{targetMethod} to connection {connectionId}", _keyData.HubName, message.Value.Target, _keyData.Id);
+                _failAttempts = 0;
+                await _serverStream.OnNextAsync(new ClientMessage(_keyData.Id, _keyData.HubName, message.Value));
+                return true;
+            }
+
+            return false;
+        }
     }
+
 }

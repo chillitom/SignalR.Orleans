@@ -36,7 +36,7 @@ namespace SignalR.Orleans
             _hubName = hubType.IsInterface && hubType.Name.StartsWith("I")
                 ? hubType.Name.Substring(1)
                 : hubType.Name;
-            _serverId = Guid.NewGuid();
+            _serverId = ToGuid(Environment.MachineName + Process.GetCurrentProcess().Id);
             _logger = logger;
             _clusterClientProvider = clusterClientProvider;
             _ = EnsureStreamSetup();
@@ -97,7 +97,7 @@ namespace SignalR.Orleans
                 if (connection.ConnectionAborted.IsCancellationRequested)
                     continue;
 
-                if (message.ExcludedIds == null || !message.ExcludedIds.Contains(connection.ConnectionId))
+                if (message.ExcludedIds?.Contains(connection.ConnectionId) != true)
                     allTasks.Add(SendLocal(connection, payload));
             }
             return Task.WhenAll(allTasks);
@@ -110,6 +110,7 @@ namespace SignalR.Orleans
 
             return SendLocal(connection, message.Payload);
         }
+
 
         public override async Task OnConnectedAsync(HubConnectionContext connection)
         {
@@ -154,14 +155,14 @@ namespace SignalR.Orleans
         public override Task SendAllAsync(string methodName, object[] args, CancellationToken cancellationToken = new CancellationToken())
         {
             var message = new InvocationMessage(methodName, args);
-            return _allStream.OnNextAsync(new AllMessage { Payload = message });
+            return _allStream.OnNextAsync(new AllMessage(message));
         }
 
         public override Task SendAllExceptAsync(string methodName, object[] args, IReadOnlyList<string> excludedConnectionIds,
             CancellationToken cancellationToken = new CancellationToken())
         {
             var message = new InvocationMessage(methodName, args);
-            return _allStream.OnNextAsync(new AllMessage { Payload = message, ExcludedIds = excludedConnectionIds });
+            return _allStream.OnNextAsync(new AllMessage(message, excludedConnectionIds));
         }
 
         public override Task SendConnectionAsync(string connectionId, string methodName, object[] args,
@@ -250,6 +251,16 @@ namespace SignalR.Orleans
             return connection.WriteAsync(hubMessage).AsTask();
         }
 
+        private static Guid ToGuid(string src)
+        {
+            byte[] stringbytes = Encoding.UTF8.GetBytes(src);
+            byte[] hashedBytes = new System.Security.Cryptography
+                .SHA1CryptoServiceProvider()
+                .ComputeHash(stringbytes);
+            Array.Resize(ref hashedBytes, 16);
+            return new Guid(hashedBytes);
+        }
+
         private Task SendExternal(string connectionId, InvocationMessage hubMessage)
         {
             var client = _clusterClientProvider.GetClient().GetClientGrain(_hubName, connectionId);
@@ -258,31 +269,45 @@ namespace SignalR.Orleans
 
         public void Dispose()
         {
-            var toUnsubscribe = new List<Task>();
-            if (_serverStream != null)
+            try
             {
-                var subscriptions = _serverStream.GetAllSubscriptionHandles().Result;
-                toUnsubscribe.AddRange(subscriptions.Select(s => s.UnsubscribeAsync()));
-            }
+                var toUnsubscribe = new List<Task>();
+                if (_serverStream != null)
+                {
+                    var subscriptions = _serverStream.GetAllSubscriptionHandles().WithTimeout(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+                    toUnsubscribe.AddRange(subscriptions.Select(s => s.UnsubscribeAsync()));
+                }
 
-            if (_allStream != null)
+                if (_allStream != null)
+                {
+                    var subscriptions = _allStream.GetAllSubscriptionHandles().WithTimeout(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
+                    toUnsubscribe.AddRange(subscriptions.Select(s => s.UnsubscribeAsync()));
+                }
+
+                var serverDirectoryGrain = _clusterClientProvider.GetClient().GetServerDirectoryGrain();
+                toUnsubscribe.Add(serverDirectoryGrain.Unregister(_serverId));
+
+                Task.WaitAll(toUnsubscribe.ToArray());
+
+                _timer?.Dispose();
+            }
+            catch (Exception)
             {
-                var subscriptions = _allStream.GetAllSubscriptionHandles().Result;
-                toUnsubscribe.AddRange(subscriptions.Select(s => s.UnsubscribeAsync()));
+                _logger.LogInformation("Failed to cleanup subcriptions");
             }
-
-            var serverDirectoryGrain = _clusterClientProvider.GetClient().GetServerDirectoryGrain();
-            toUnsubscribe.Add(serverDirectoryGrain.Unregister(_serverId));
-
-            Task.WaitAll(toUnsubscribe.ToArray());
-
-            _timer?.Dispose();
         }
     }
 
+    [Immutable]
     public class AllMessage
     {
-        public IReadOnlyList<string> ExcludedIds { get; set; }
-        public InvocationMessage Payload { get; set; }
+        public AllMessage(InvocationMessage payload, IReadOnlyList<string> excludedIds = null)
+        {
+            Payload = payload;
+            ExcludedIds = excludedIds;
+        }
+
+        public IReadOnlyList<string> ExcludedIds { get; }
+        public InvocationMessage Payload { get; }
     }
 }

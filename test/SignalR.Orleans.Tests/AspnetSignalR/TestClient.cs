@@ -148,7 +148,7 @@ namespace SignalR.Orleans.Tests.AspnetSignalR
 
                 if (message == null)
                 {
-                    var result = await Connection.Application.Input.ReadAsync().OrTimeout();
+                    var result = await Connection.Application.Input.ReadAsync();
                     var buffer = result.Buffer;
 
                     try
@@ -177,36 +177,39 @@ namespace SignalR.Orleans.Tests.AspnetSignalR
 
         public HubMessage TryRead(bool isHandshake = false)
         {
-            if (!Connection.Application.Input.TryRead(out var result))
+            lock (Connection.Application.Input)
             {
-                return null;
-            }
-
-            var buffer = result.Buffer;
-
-            try
-            {
-                if (!isHandshake)
+                Connection.Application.Input.CancelPendingRead();
+                if (!Connection.Application.Input.TryRead(out var result))
                 {
-                    if (_protocol.TryParseMessage(ref buffer, _invocationBinder, out var message))
+                    return null;
+                }
+
+                var buffer = result.Buffer;
+
+                try
+                {
+                    if (!isHandshake)
                     {
-                        return message;
+                        if (_protocol.TryParseMessage(ref buffer, _invocationBinder, out var message))
+                        {
+                            return message;
+                        }
+                    }
+                    else
+                    {
+                        // read first message out of the incoming data
+                        if (HandshakeProtocol.TryParseResponseMessage(ref buffer, out var responseMessage))
+                        {
+                            return responseMessage;
+                        }
                     }
                 }
-                else
+                finally
                 {
-                    // read first message out of the incoming data 
-                    if (HandshakeProtocol.TryParseResponseMessage(ref buffer, out var responseMessage))
-                    {
-                        return responseMessage;
-                    }
+                    Connection.Application.Input.AdvanceTo(buffer.Start);
                 }
             }
-            finally
-            {
-                Connection.Application.Input.AdvanceTo(buffer.Start);
-            }
-
             return null;
         }
 
@@ -245,7 +248,6 @@ namespace SignalR.Orleans.Tests.AspnetSignalR
         public TransferFormat ActiveFormat { get; set; }
         private readonly object _heartbeatLock = new object();
         private List<(Action<object> handler, object state)> _heartbeatHandlers;
-
 
         public void OnHeartbeat(Action<object> action, object state)
         {

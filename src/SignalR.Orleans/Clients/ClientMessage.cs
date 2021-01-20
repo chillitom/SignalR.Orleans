@@ -1,11 +1,20 @@
 using Microsoft.AspNetCore.SignalR.Protocol;
+using Orleans.Concurrency;
 
 namespace SignalR.Orleans.Clients
 {
+    [Immutable]
     public class ClientMessage
     {
-        public string HubName { get; set; }
-        public string ConnectionId { get; set; }
-        public InvocationMessage Payload { get; set; }
+        public ClientMessage(string connectionId, string hubName, InvocationMessage payload)
+        {
+            ConnectionId = connectionId;
+            HubName = hubName;
+            Payload = payload;
+        }
+
+        public string ConnectionId { get; }
+        public string HubName { get; }
+        public InvocationMessage Payload { get; }
     }
 }
